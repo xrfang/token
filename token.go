@@ -5,8 +5,8 @@ import (
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/rand"
-	"encoding/base64"
 	"encoding/binary"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"net"
@@ -35,7 +35,7 @@ func New(ident uint64, expire time.Time, owner net.IP) string {
 	iv := bytes.Repeat([]byte{0}, aes.BlockSize)
 	cbc := cipher.NewCBCEncrypter(block, iv)
 	cbc.CryptBlocks(raw, raw)
-	return base64.StdEncoding.EncodeToString(raw)
+	return hex.EncodeToString(raw)
 }
 
 func Verify(token string, holder net.IP) (ident uint64, err error) {
@@ -44,7 +44,7 @@ func Verify(token string, holder net.IP) (ident uint64, err error) {
 			err = errors.New("corrupted token")
 		}
 	}()
-	data, err := base64.StdEncoding.DecodeString(token)
+	data, err := hex.DecodeString(token)
 	assert(err)
 	block, _ := aes.NewCipher(tokenKey)
 	iv := bytes.Repeat([]byte{0}, aes.BlockSize)
