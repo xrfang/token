@@ -8,7 +8,7 @@ it does not rely on any internal/external storage (i.e. token store).
 ```
 //generate token
 uid := uint64(123456)
-tok := token.New(uid, time.Now().Add(time.Hour), nil)
+tok := token.New(uid, time.Now().Add(time.Hour))
 fmt.Printf("generated token %q for user %d\n", tok, uid)
 
 //verify token
