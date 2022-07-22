@@ -56,6 +56,10 @@ func Verify(token string) (ident uint64, err error) {
 	return binary.BigEndian.Uint64(data[7:]), nil
 }
 
+func RevokeAll() {
+	rand.Read(tokenKey)
+}
+
 var tokenKey []byte
 
 func init() {
