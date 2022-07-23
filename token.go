@@ -8,6 +8,8 @@ import (
 	"encoding/binary"
 	"encoding/hex"
 	"errors"
+	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -26,7 +28,8 @@ func New(ident uint64, expire time.Time) string {
 	binary.BigEndian.PutUint64(buf, ident)
 	raw = append(raw, buf...)
 	raw = append(raw, raw[0])
-	block, _ := aes.NewCipher(tokenKey)
+	k := tokenKey.Load()
+	block, _ := aes.NewCipher(k.([]byte))
 	iv := bytes.Repeat([]byte{0}, aes.BlockSize)
 	cbc := cipher.NewCBCEncrypter(block, iv)
 	cbc.CryptBlocks(raw, raw)
@@ -41,7 +44,8 @@ func Verify(token string) (ident uint64, err error) {
 	}()
 	data, err := hex.DecodeString(token)
 	assert(err)
-	block, _ := aes.NewCipher(tokenKey)
+	k := tokenKey.Load()
+	block, _ := aes.NewCipher(k.([]byte))
 	iv := bytes.Repeat([]byte{0}, aes.BlockSize)
 	cbc := cipher.NewCBCDecrypter(block, iv)
 	cbc.CryptBlocks(data, data)
@@ -51,18 +55,47 @@ func Verify(token string) (ident uint64, err error) {
 	timestamp := binary.BigEndian.Uint64(append([]byte{0, 0}, data[1:7]...))
 	exp := time.Unix(int64(timestamp), 0)
 	if time.Now().After(exp) {
-		return 0, errors.New("invalid token")
+		return 0, errors.New("expired token")
+	}
+	if _, ok := revoked.Load(token); ok {
+		return 0, errors.New("revoked token")
 	}
 	return binary.BigEndian.Uint64(data[7:]), nil
 }
 
-func RevokeAll() {
-	rand.Read(tokenKey)
+func Revoke(token string) {
+	revoked.Store(token, true)
+	clean <- true
 }
 
-var tokenKey []byte
+func RevokeAll() {
+	key := make([]byte, 16)
+	rand.Read(key)
+	tokenKey.Store(key)
+	revoked.Range(func(k, v any) bool {
+		revoked.Delete(k)
+		return true
+	})
+}
+
+var (
+	tokenKey atomic.Value
+	revoked  sync.Map
+	clean    chan bool
+)
 
 func init() {
-	tokenKey = make([]byte, 16)
-	rand.Read(tokenKey)
+	clean = make(chan bool)
+	RevokeAll()
+	go func() {
+		for {
+			<-clean
+			revoked.Range(func(k, v any) bool {
+				if _, err := Verify(k.(string)); err != nil {
+					revoked.Delete(k)
+				}
+				return true
+			})
+		}
+	}()
 }

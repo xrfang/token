@@ -1,7 +1,6 @@
 # token
 
-Simple cryptographic token for golang.  This token implementation is based on AES/CBC algorithm, 
-it does not rely on any internal/external storage (i.e. token store).
+Simple cryptographic token for golang, based on AES/CBC algorithm. It does not rely on any internal/external storage (i.e. token store), except for revokation of individual token.
 
 ## usage
 
@@ -18,4 +17,11 @@ if err !=nil {
 } else {
     fmt.Println("token is valid for user", uid)
 }
+
+//revoke specified token, implemented by store a token into a "blacklist", 
+//a sync.Map, which consumes memory.
+token.Revoke(tok)
+
+//revoke all tokens, by mean of reset the AES key.
+token.RevokeAll()
 ```
