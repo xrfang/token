@@ -5,11 +5,10 @@ import (
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/rand"
-	"encoding/base64"
 	"encoding/binary"
+	"encoding/hex"
 	"errors"
 	"io"
-	"net/url"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -33,7 +32,7 @@ func New(ident uint64, expire time.Time) string {
 	nonce := make([]byte, gcm.NonceSize())
 	io.ReadFull(rand.Reader, nonce)
 	enc := gcm.Seal(nil, nonce, raw, nil)
-	return url.QueryEscape(base64.StdEncoding.EncodeToString(append(nonce, enc...)))
+	return hex.EncodeToString(append(nonce, enc...))
 }
 
 func Verify(token string) (ident uint64, err error) {
@@ -42,9 +41,7 @@ func Verify(token string) (ident uint64, err error) {
 			err = errors.New("corrupted token")
 		}
 	}()
-	b64, err := url.QueryUnescape(token)
-	assert(err)
-	data, err := base64.StdEncoding.DecodeString(b64)
+	data, err := hex.DecodeString(token)
 	assert(err)
 	k := tokenKey.Load()
 	blk, _ := aes.NewCipher(k.([]byte))
