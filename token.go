@@ -5,9 +5,11 @@ import (
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/rand"
+	"encoding/base64"
 	"encoding/binary"
-	"encoding/hex"
 	"errors"
+	"io"
+	"net/url"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -20,20 +22,18 @@ func assert(e interface{}) {
 }
 
 func New(ident uint64, expire time.Time) string {
-	raw := []byte{0}
-	rand.Read(raw)
 	buf := make([]byte, 8)
-	binary.BigEndian.PutUint64(buf, uint64(expire.Unix()))
-	raw = append(raw, buf[2:]...)
-	binary.BigEndian.PutUint64(buf, ident)
-	raw = append(raw, buf...)
-	raw = append(raw, raw[0])
+	binary.LittleEndian.PutUint32(buf, uint32(expire.Unix()))
+	raw := append([]byte{}, buf[:4]...)
+	binary.LittleEndian.PutUint64(buf, ident)
+	raw = append(raw, bytes.TrimRight(buf, string([]byte{0}))...)
 	k := tokenKey.Load()
-	block, _ := aes.NewCipher(k.([]byte))
-	iv := bytes.Repeat([]byte{0}, aes.BlockSize)
-	cbc := cipher.NewCBCEncrypter(block, iv)
-	cbc.CryptBlocks(raw, raw)
-	return hex.EncodeToString(raw)
+	blk, _ := aes.NewCipher(k.([]byte))
+	gcm, _ := cipher.NewGCM(blk)
+	nonce := make([]byte, gcm.NonceSize())
+	io.ReadFull(rand.Reader, nonce)
+	enc := gcm.Seal(nil, nonce, raw, nil)
+	return url.QueryEscape(base64.StdEncoding.EncodeToString(append(nonce, enc...)))
 }
 
 func Verify(token string) (ident uint64, err error) {
@@ -42,17 +42,19 @@ func Verify(token string) (ident uint64, err error) {
 			err = errors.New("corrupted token")
 		}
 	}()
-	data, err := hex.DecodeString(token)
+	b64, err := url.QueryUnescape(token)
+	assert(err)
+	data, err := base64.StdEncoding.DecodeString(b64)
 	assert(err)
 	k := tokenKey.Load()
-	block, _ := aes.NewCipher(k.([]byte))
-	iv := bytes.Repeat([]byte{0}, aes.BlockSize)
-	cbc := cipher.NewCBCDecrypter(block, iv)
-	cbc.CryptBlocks(data, data)
-	if data[0] != data[len(data)-1] {
-		panic(errors.New("invalid head/tail"))
-	}
-	timestamp := binary.BigEndian.Uint64(append([]byte{0, 0}, data[1:7]...))
+	blk, _ := aes.NewCipher(k.([]byte))
+	gcm, _ := cipher.NewGCM(blk)
+	ns := gcm.NonceSize()
+	nonce := data[:ns]
+	data = data[ns:]
+	dec, err := gcm.Open(nil, nonce, data, nil)
+	assert(err)
+	timestamp := binary.LittleEndian.Uint32(dec)
 	exp := time.Unix(int64(timestamp), 0)
 	if time.Now().After(exp) {
 		return 0, errors.New("expired token")
@@ -60,7 +62,9 @@ func Verify(token string) (ident uint64, err error) {
 	if _, ok := revoked.Load(token); ok {
 		return 0, errors.New("revoked token")
 	}
-	return binary.BigEndian.Uint64(data[7:]), nil
+	buf := make([]byte, 8)
+	copy(buf, dec[4:])
+	return binary.BigEndian.Uint64(buf), nil
 }
 
 func Revoke(token string) {
