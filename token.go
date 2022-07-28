@@ -61,7 +61,7 @@ func Verify(token string) (ident uint64, err error) {
 	}
 	buf := make([]byte, 8)
 	copy(buf, dec[4:])
-	return binary.BigEndian.Uint64(buf), nil
+	return binary.LittleEndian.Uint64(buf), nil
 }
 
 func Revoke(token string) {

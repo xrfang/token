@@ -13,6 +13,9 @@ func TestValidToken(t *testing.T) {
 	if err != nil {
 		t.Fatalf(err.Error())
 	}
+	if ident != 123456 {
+		t.Fatalf("token uid should be 123456, got %v", ident)
+	}
 	t.Logf("token is valid for uid#%d", ident)
 }
 
