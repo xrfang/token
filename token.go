@@ -54,6 +54,7 @@ func Verify(token string) (ident uint64, err error) {
 	timestamp := binary.LittleEndian.Uint32(dec)
 	exp := time.Unix(int64(timestamp), 0)
 	if time.Now().After(exp) {
+		revoked.Delete(token) //确保失效的token被移出黑名单
 		return 0, errors.New("expired token")
 	}
 	if _, ok := revoked.Load(token); ok {
@@ -77,6 +78,27 @@ func RevokeAll() {
 		revoked.Delete(k)
 		return true
 	})
+}
+
+func Seed() []byte {
+	return tokenKey.Load().([]byte)
+}
+
+func Init(seed []byte) (err error) {
+	if len(seed) != 16 {
+		return errors.New("length of seed must be 16 bytes")
+	}
+	tokenKey.Store(seed)
+	return nil
+}
+
+func Revoked() []string {
+	var rt []string
+	revoked.Range(func(k, v any) bool {
+		rt = append(rt, k.(string))
+		return true
+	})
+	return rt
 }
 
 var (
