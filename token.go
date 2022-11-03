@@ -32,7 +32,6 @@ func New(ident uint64, expire time.Time) string {
 	nonce := make([]byte, gcm.NonceSize())
 	io.ReadFull(rand.Reader, nonce)
 	enc := gcm.Seal(nil, nonce, raw, nil)
-	changed.Store(true)
 	return hex.EncodeToString(append(nonce, enc...))
 }
 
@@ -122,7 +121,6 @@ var (
 func init() {
 	clean = make(chan bool)
 	RevokeAll()
-	changed.Store(false)
 	go func() {
 		for {
 			<-clean
