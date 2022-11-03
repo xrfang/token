@@ -32,6 +32,7 @@ func New(ident uint64, expire time.Time) string {
 	nonce := make([]byte, gcm.NonceSize())
 	io.ReadFull(rand.Reader, nonce)
 	enc := gcm.Seal(nil, nonce, raw, nil)
+	changed.Store(true)
 	return hex.EncodeToString(append(nonce, enc...))
 }
 
@@ -54,7 +55,6 @@ func Verify(token string) (ident uint64, err error) {
 	timestamp := binary.LittleEndian.Uint32(dec)
 	exp := time.Unix(int64(timestamp), 0)
 	if time.Now().After(exp) {
-		revoked.Delete(token) //确保失效的token被移出黑名单
 		return 0, errors.New("expired token")
 	}
 	if _, ok := revoked.Load(token); ok {
@@ -67,6 +67,7 @@ func Verify(token string) (ident uint64, err error) {
 
 func Revoke(token string) {
 	revoked.Store(token, true)
+	changed.Store(true)
 	clean <- true
 }
 
@@ -78,6 +79,7 @@ func RevokeAll() {
 		revoked.Delete(k)
 		return true
 	})
+	changed.Store(true)
 }
 
 func Seed() []byte {
@@ -101,15 +103,25 @@ func Revoked() []string {
 	return rt
 }
 
+func Changed() bool {
+	return changed.Load()
+}
+
+func Reset() {
+	changed.Store(false)
+}
+
 var (
 	tokenKey atomic.Value
 	revoked  sync.Map
 	clean    chan bool
+	changed  atomic.Bool
 )
 
 func init() {
 	clean = make(chan bool)
 	RevokeAll()
+	changed.Store(false)
 	go func() {
 		for {
 			<-clean
