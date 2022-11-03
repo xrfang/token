@@ -91,6 +91,7 @@ func Init(seed []byte) (err error) {
 		return errors.New("length of seed must be 16 bytes")
 	}
 	tokenKey.Store(seed)
+	changed.Store(true)
 	return nil
 }
 
