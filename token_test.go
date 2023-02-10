@@ -36,6 +36,8 @@ func TestExpiredToken(t *testing.T) {
 		t.Fatalf("token is still valid at %s", now.Format(time.RFC3339))
 	}
 	t.Logf("token is expired at %s (err=%v)", now.Format(time.RFC3339), err)
+	ident, exp, err := Inspect(tok)
+	t.Logf("ident: %v; expire=%v; err=%v", ident, exp, err)
 }
 
 func TestRevokeToken(t *testing.T) {

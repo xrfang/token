@@ -35,7 +35,7 @@ func New(ident uint64, expire time.Time) string {
 	return hex.EncodeToString(append(nonce, enc...))
 }
 
-func Verify(token string) (ident uint64, err error) {
+func Inspect(token string) (ident uint64, expire time.Time, err error) {
 	defer func() {
 		if e := recover(); e != nil {
 			err = errors.New("corrupted token")
@@ -51,17 +51,25 @@ func Verify(token string) (ident uint64, err error) {
 	data = data[ns:]
 	dec, err := gcm.Open(nil, nonce, data, nil)
 	assert(err)
-	timestamp := binary.LittleEndian.Uint32(dec)
-	exp := time.Unix(int64(timestamp), 0)
-	if time.Now().After(exp) {
-		return 0, errors.New("expired token")
-	}
 	if _, ok := revoked.Load(token); ok {
-		return 0, errors.New("revoked token")
+		err = errors.New("revoked token")
+		return
 	}
+	timestamp := binary.LittleEndian.Uint32(dec)
+	expire = time.Unix(int64(timestamp), 0)
 	buf := make([]byte, 8)
 	copy(buf, dec[4:])
-	return binary.LittleEndian.Uint64(buf), nil
+	ident = binary.LittleEndian.Uint64(buf)
+	return
+}
+
+func Verify(token string) (ident uint64, err error) {
+	var exp time.Time
+	ident, exp, err = Inspect(token)
+	if err == nil && time.Now().After(exp) {
+		err = errors.New("expired token")
+	}
+	return
 }
 
 func Revoke(token string) {
