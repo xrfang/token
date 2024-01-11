@@ -1,6 +1,6 @@
 # token
 
-Simple cryptographic token for golang, based on AES/CBC algorithm. It does not rely on any internal/external storage (i.e. token store), except for revokation of individual token.
+Simple cryptographic token for golang, based on AES/GCM algorithm. It does not rely on any internal/external storage (i.e. token store), except for revokation of individual token.
 
 ## usage
 

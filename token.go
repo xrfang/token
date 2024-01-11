@@ -20,13 +20,21 @@ func assert(e interface{}) {
 	}
 }
 
-func New(ident uint64, expire time.Time) string {
+type Token struct {
+	on  sync.Once
+	key atomic.Value
+	rev sync.Map
+	cln chan bool
+	chg atomic.Bool
+}
+
+func (t *Token) New(ident uint64, expire time.Time) string {
 	buf := make([]byte, 8)
 	binary.LittleEndian.PutUint32(buf, uint32(expire.Unix()))
 	raw := append([]byte{}, buf[:4]...)
 	binary.LittleEndian.PutUint64(buf, ident)
 	raw = append(raw, bytes.TrimRight(buf, string([]byte{0}))...)
-	k := tokenKey.Load()
+	k := t.key.Load()
 	blk, _ := aes.NewCipher(k.([]byte))
 	gcm, _ := cipher.NewGCM(blk)
 	nonce := make([]byte, gcm.NonceSize())
@@ -35,7 +43,7 @@ func New(ident uint64, expire time.Time) string {
 	return hex.EncodeToString(append(nonce, enc...))
 }
 
-func Inspect(token string) (ident uint64, expire time.Time, err error) {
+func (t *Token) Inspect(token string) (ident uint64, expire time.Time, err error) {
 	defer func() {
 		if e := recover(); e != nil {
 			err = errors.New("corrupted token")
@@ -43,7 +51,7 @@ func Inspect(token string) (ident uint64, expire time.Time, err error) {
 	}()
 	data, err := hex.DecodeString(token)
 	assert(err)
-	k := tokenKey.Load()
+	k := t.key.Load()
 	blk, _ := aes.NewCipher(k.([]byte))
 	gcm, _ := cipher.NewGCM(blk)
 	ns := gcm.NonceSize()
@@ -51,7 +59,7 @@ func Inspect(token string) (ident uint64, expire time.Time, err error) {
 	data = data[ns:]
 	dec, err := gcm.Open(nil, nonce, data, nil)
 	assert(err)
-	if _, ok := revoked.Load(token); ok {
+	if _, ok := t.rev.Load(token); ok {
 		err = errors.New("revoked token")
 		return
 	}
@@ -63,81 +71,86 @@ func Inspect(token string) (ident uint64, expire time.Time, err error) {
 	return
 }
 
-func Verify(token string) (ident uint64, err error) {
+func (t *Token) Verify(token string) (ident uint64, err error) {
 	var exp time.Time
-	ident, exp, err = Inspect(token)
+	ident, exp, err = t.Inspect(token)
 	if err == nil && time.Now().After(exp) {
 		err = errors.New("expired token")
 	}
 	return
 }
 
-func Revoke(token string) {
-	revoked.Store(token, true)
-	changed.Store(true)
-	clean <- true
+func (t *Token) Revoke(token string) {
+	t.rev.Store(token, true)
+	t.chg.Store(true)
+	t.cln <- true
 }
 
-func RevokeAll() {
+func (t *Token) RevokeAll() {
 	key := make([]byte, 16)
 	rand.Read(key)
-	tokenKey.Store(key)
-	revoked.Range(func(k, v any) bool {
-		revoked.Delete(k)
+	t.key.Store(key)
+	t.rev.Range(func(k, v any) bool {
+		t.rev.Delete(k)
 		return true
 	})
-	changed.Store(true)
+	t.chg.Store(true)
 }
 
-func Seed() []byte {
-	return tokenKey.Load().([]byte)
+func (t *Token) Changed() bool {
+	return t.chg.Load()
 }
 
-func Init(seed []byte) (err error) {
-	if len(seed) != 16 {
-		return errors.New("length of seed must be 16 bytes")
-	}
-	tokenKey.Store(seed)
-	changed.Store(true)
-	return nil
+func (t *Token) Reset() {
+	t.chg.Store(false)
 }
 
-func Revoked() []string {
+func (t *Token) Revoked() []string {
 	var rt []string
-	revoked.Range(func(k, v any) bool {
+	t.rev.Range(func(k, v any) bool {
 		rt = append(rt, k.(string))
 		return true
 	})
 	return rt
 }
 
-func Changed() bool {
-	return changed.Load()
+func (t *Token) Seed() []byte {
+	return t.key.Load().([]byte)
 }
 
-func Reset() {
-	changed.Store(false)
+func (t *Token) Init(seed []byte) (err error) {
+	t.on.Do(func() {
+		t.cln = make(chan bool)
+		go func() {
+			for {
+				<-t.cln
+				t.rev.Range(func(k, v any) bool {
+					if _, err := Verify(k.(string)); err != nil {
+						t.rev.Delete(k)
+					}
+					return true
+				})
+			}
+		}()
+	})
+	switch len(seed) {
+	case 0:
+		seed = make([]byte, 16)
+		rand.Read(seed)
+		fallthrough
+	case 16:
+		t.key.Store(seed)
+		t.chg.Store(true)
+		return nil
+	default:
+		return errors.New("length of seed must be 16 bytes")
+	}
 }
 
 var (
-	tokenKey atomic.Value
-	revoked  sync.Map
-	clean    chan bool
-	changed  atomic.Bool
+	defaultToken Token
 )
 
 func init() {
-	clean = make(chan bool)
-	RevokeAll()
-	go func() {
-		for {
-			<-clean
-			revoked.Range(func(k, v any) bool {
-				if _, err := Verify(k.(string)); err != nil {
-					revoked.Delete(k)
-				}
-				return true
-			})
-		}
-	}()
+	defaultToken.Init(nil)
 }
